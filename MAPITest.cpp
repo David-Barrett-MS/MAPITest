@@ -10,7 +10,7 @@
  * THE SOFTWARE.
  * */
 
-// MAPITest.cpp : This file contains the 'main' function. Program execution begins and ends there.
+// MAPITest.cpp : This file contains the 'wmain' function. Program execution begins and ends there.
 //
 
 using namespace std;
@@ -20,6 +20,8 @@ using namespace std;
 #include <tchar.h>
 #include <locale>
 #include <codecvt>
+#include <iostream>
+#include <cwchar>
 
 #define USES_IID_IMAPIFolder
 #define USES_IID_IMAPITable
@@ -30,10 +32,24 @@ using namespace std;
 fstream logFile;
 LPMAPISESSION lpSession = NULL;
 
+LPWSTR lpszProfile = nullptr;
+bool blnBackgroundSession = false;
+bool blnNewSession = false;
+bool blnAllowOthers = false;
+bool blnListMessages = false;
+
 
 void log(string data)
 {
 	std::cout << data;
+	if (logFile)
+		logFile << data;
+}
+
+void log(LPWSTR lpszW)
+{
+	string data = wstring_convert<codecvt_utf8<wchar_t>, wchar_t>().to_bytes(wstring(lpszW));
+	std::cout << data << "\n";
 	if (logFile)
 		logFile << data;
 }
@@ -250,7 +266,9 @@ HRESULT ProcessMessageStore(SRow storeInfoRow)
 			hr = OpenInbox(pMDB, &inbox);
 			if (SUCCEEDED(hr))
 			{
-				ListMessages(pMDB, inbox);
+				log("Receive folder opened\n");
+				if (blnListMessages)
+					ListMessages(pMDB, inbox);
 				// Release inbox
 				inbox->Release();
 				log("Receive folder released\n");
@@ -279,7 +297,7 @@ int MAPITest()
 {
 	int nRetCode = 0;
 	HRESULT hRes = 0;
-	LPWSTR lpszProfile = NULL;
+	//LPWSTR lpszProfile = NULL;
 
 	log("Initialising MAPI test\n");
 
@@ -295,6 +313,8 @@ int MAPITest()
 
 		log("Starting MAPI log-on test\n");
 
+		const int MAPI_BG_SESSION = 0x00200000;
+
 		// Initialize MAPI
 		if FAILED(hRes = MAPIInitialize(0))
 		{
@@ -304,7 +324,32 @@ int MAPITest()
 		else
 		{
 			log("MAPIInitialize succeeded\n");
-			FLAGS flags = MAPI_NEW_SESSION | MAPI_EXTENDED | MAPI_USE_DEFAULT;
+			FLAGS flags = MAPI_EXTENDED;
+			if (blnBackgroundSession)
+			{
+				flags = flags | MAPI_BG_SESSION;
+				log("Using MAPI_BG_SESSION\n");
+			}
+			if (blnNewSession)
+			{
+				flags = flags | MAPI_NEW_SESSION;
+				log("Using MAPI_NEW_SESSION\n");
+			}
+			if (blnAllowOthers)
+			{
+				flags = flags | MAPI_ALLOW_OTHERS;
+				log("Using MAPI_ALLOW_OTHERS\n");
+			}
+			if (lpszProfile == nullptr)
+			{
+				flags = flags | MAPI_USE_DEFAULT;
+				log("Using MAPI_USE_DEFAULT\n");
+			}
+			else
+			{
+				log("Attempting to use MAPI profile: ");
+				log(lpszProfile);
+			}
 
 			// Log on to MAPI session
 			if (FAILED(hRes = MAPILogonEx(NULL, lpszProfile, NULL, flags, &lpSession)))
@@ -366,11 +411,38 @@ int MAPITest()
 /// <summary>
 /// Main entry point
 /// </summary>
-/// <returns>0 if successful, error code otherwise</returns>
-int main()
+int wmain(int argc, wchar_t* argv[])
 {
+	// Parse any command line arguments
+	for (int i = 0; i < argc; ++i)
+	{
+		if (std::wcscmp(argv[i], L"-profile") == 0 && i + 1 < argc)
+		{
+			lpszProfile = argv[i + 1];
+		}
+
+		if (std::wcscmp(argv[i], L"-bgsession") == 0)
+		{
+			blnBackgroundSession = true;
+		}
+
+		if (std::wcscmp(argv[i], L"-newsession") == 0)
+		{
+			blnNewSession = true;
+		}
+
+		if (std::wcscmp(argv[i], L"-allowothers") == 0)
+		{
+			blnAllowOthers = true;
+		}
+
+		if (std::wcscmp(argv[i], L"-listmessages") == 0)
+		{
+			blnListMessages = true;
+		}
+	}
+
 	return MAPITest();
 }
-
 
 
