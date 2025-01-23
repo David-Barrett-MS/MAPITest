@@ -1,5 +1,5 @@
 /*
- * By David Barrett, Microsoft Ltd. 2022. Use at your own risk.  No warranties are given.
+ * By David Barrett, Microsoft Ltd. 2025. Use at your own risk.  No warranties are given.
  *
  * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
  * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
@@ -193,9 +193,10 @@ STDMETHODIMP ListMessages(
 					}
 				}
 			}
-			else
-				logError("OpenEntry error: ", hRes);
 		}
+		else
+			logError("OpenEntry error: ", hRes);
+
 		MAPIFreeBuffer(lpProp);
 		UlRelease(lpMessage);
 		hRes = S_OK;
