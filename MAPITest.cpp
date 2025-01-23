@@ -22,6 +22,7 @@ using namespace std;
 #include <codecvt>
 #include <iostream>
 #include <cwchar>
+#include <conio.h>
 
 #define USES_IID_IMAPIFolder
 #define USES_IID_IMAPITable
@@ -37,6 +38,9 @@ bool blnBackgroundSession = false;
 bool blnNewSession = false;
 bool blnAllowOthers = false;
 bool blnListMessages = false;
+bool blnListMessageProperties = false;
+bool blnKeepSessionOpen = false;
+int iPropDumpMessageCount = 0;
 
 
 void log(string data)
@@ -62,6 +66,12 @@ void log(string data, LPWSTR lpszW)
 		logFile << data << moreData << "\n";
 }
 
+void log(string data, ULONG number)
+{
+	std::cout << data << std::hex << number << "\n";
+	if (logFile)
+		logFile << data << std::hex << number << "\n";
+}
 
 void logError(string data, HRESULT hr)
 {
@@ -97,9 +107,10 @@ STDMETHODIMP ListMessages(
 	LPSRowSet pRows = NULL;
 	LPSTREAM lpStream = NULL;
 	ULONG i;
+	ULONG cMaxMessages = 100;
 
 	// Define a SPropTagArray array here using the SizedSPropTagArray Macro
-	// This enum will allows you to access portions of the array by a name instead of a number.
+	// This enum allows access to portions of the array by name instead of number.
 	// If more tags are added to the array, appropriate constants need to be added to the enum.
 	enum {
 		ePR_SUBJECT,
@@ -123,19 +134,20 @@ STDMETHODIMP ListMessages(
 	}
 
 	hRes = HrQueryAllRows(
-		lpContentsTable,
-		(LPSPropTagArray)&sptCols,
-		NULL, // restriction...we're not using this parameter
-		NULL, // sort order...we're not using this parameter
-		0,
-		&pRows);
+		lpContentsTable,				//
+		(LPSPropTagArray)&sptCols,		//
+		NULL,							// restriction
+		NULL,							// sort order
+		0,								//
+		&pRows);						//
 	if (FAILED(hRes))
 	{
 		logError("Failed on HrQueryAllRows: ", hRes);
 		goto quit;
 	}
 
-	for (i = 0; i < pRows->cRows; i++)
+	if (pRows->cRows < 100) { cMaxMessages = pRows->cRows; }
+	for (i = 0; i < cMaxMessages; i++)
 	{
 		LPMESSAGE lpMessage = NULL;
 		ULONG ulObjType = NULL;
@@ -145,21 +157,45 @@ STDMETHODIMP ListMessages(
 			log("Item subject: ", pRows->aRow[i].lpProps[ePR_SUBJECT].Value.lpszW);
 
 		hRes = lpMDB->OpenEntry(
-			pRows->aRow[i].lpProps[ePR_ENTRYID].Value.bin.cb,
-			(LPENTRYID)pRows->aRow[i].lpProps[ePR_ENTRYID].Value.bin.lpb,
-			NULL, // default interface
-			MAPI_BEST_ACCESS,
-			&ulObjType,
-			(LPUNKNOWN*)&lpMessage);
+			pRows->aRow[i].lpProps[ePR_ENTRYID].Value.bin.cb,				// size of EntryId
+			(LPENTRYID)pRows->aRow[i].lpProps[ePR_ENTRYID].Value.bin.lpb,	// value of EntryId
+			NULL,															// default interface (which will return IMessage in this case)
+			MAPI_BEST_ACCESS,												// flags
+			&ulObjType,														// pointer to the type of opened object [OUT]
+			(LPUNKNOWN*)&lpMessage);										// pointer to a pointer to the opened object [OUT]
 
 		if (!FAILED(hRes))
 		{
 			// We've opened the message
-			// We don't do anything further at this point, but the message can be accessed using lpMessage
-		}
-		else
-			logError("OpenEntry error: ", hRes);
+			if (blnListMessageProperties)
+			{
+				if (iPropDumpMessageCount < 5)
+				{
+					// Retrieve and log all properties
+					ULONG ulProps = 0;
+					LPSPropValue propArray = nullptr;
+					hRes = lpMessage->GetProps(NULL, MAPI_UNICODE, &ulProps, &propArray);
+					if (SUCCEEDED(hRes))
+					{
+						// Process the properties
+						for (ULONG i = 0; i < ulProps; ++i)
+						{
+							log("Property: ", propArray[i].ulPropTag);
+						}
 
+						// Free the property array
+						MAPIFreeBuffer(propArray);
+						iPropDumpMessageCount++;
+					}
+					else
+					{
+						logError("Failed to retrieve message properties: ", hRes);
+					}
+				}
+			}
+			else
+				logError("OpenEntry error: ", hRes);
+		}
 		MAPIFreeBuffer(lpProp);
 		UlRelease(lpMessage);
 		hRes = S_OK;
@@ -191,11 +227,11 @@ STDMETHODIMP OpenInbox(
 	*lpInboxFolder = NULL;
 
 	hRes = lpMDB->GetReceiveFolder(
-		NULL, // Get default receive folder
-		NULL, // Flags
-		&cbInbox,
-		&lpbInbox,
-		NULL);
+		NULL,			// Get default receive folder
+		NULL,			// Flags
+		&cbInbox,		// Size of receive folder
+		&lpbInbox,		// EntryId of receive folder
+		NULL);			//
 	if (FAILED(hRes))
 	{
 		logError("Failed on GetReceiveFolder: ", hRes);
@@ -203,12 +239,12 @@ STDMETHODIMP OpenInbox(
 	}
 
 	hRes = lpMDB->OpenEntry(
-		cbInbox, // Size and...
-		lpbInbox, // Value of the Inbox's EntryID
-		NULL, // We want the default interface (IMAPIFolder)
-		MAPI_BEST_ACCESS, // Flags
-		&ulObjType, // Object returned type
-		(LPUNKNOWN*)&lpTempFolder); //Returned folder
+		cbInbox,					// Size and...
+		lpbInbox,					// Value of the Inbox's EntryID
+		NULL,						// We want the default interface (IMAPIFolder)
+		MAPI_BEST_ACCESS,			// Flags
+		&ulObjType,					// Object returned type
+		(LPUNKNOWN*)&lpTempFolder); // Returned folder
 	if (FAILED(hRes))
 	{
 		logError("Failed on OpenEntry (receive folder): ", hRes);
@@ -394,6 +430,13 @@ int MAPITest()
 					pStoresTbl->Release();
 				}
 
+				if (blnKeepSessionOpen)
+				{
+					log("Waiting for keypress before logging session off");
+					_getwch();
+					log("\n");
+				}
+
 				// Log off
 				if (FAILED(hRes = lpSession->Logoff(0, 0, 0)))
 					logError("Error at Logoff: ", hRes);
@@ -420,25 +463,30 @@ int wmain(int argc, wchar_t* argv[])
 		{
 			lpszProfile = argv[i + 1];
 		}
-
-		if (std::wcscmp(argv[i], L"-bgsession") == 0)
+		else if (std::wcscmp(argv[i], L"-bgsession") == 0)
 		{
 			blnBackgroundSession = true;
 		}
-
-		if (std::wcscmp(argv[i], L"-newsession") == 0)
+		else if (std::wcscmp(argv[i], L"-newsession") == 0)
 		{
 			blnNewSession = true;
 		}
-
-		if (std::wcscmp(argv[i], L"-allowothers") == 0)
+		else if (std::wcscmp(argv[i], L"-allowothers") == 0)
 		{
 			blnAllowOthers = true;
 		}
-
-		if (std::wcscmp(argv[i], L"-listmessages") == 0)
+		else if (std::wcscmp(argv[i], L"-listmessages") == 0)
 		{
 			blnListMessages = true;
+		}
+		else if (std::wcscmp(argv[i], L"-listmessageproperties") == 0)
+		{
+			blnListMessages = true;
+			blnListMessageProperties = true;
+		}
+		else if (std::wcscmp(argv[i], L"-keepsessionopen") == 0)
+		{
+			blnKeepSessionOpen = true;
 		}
 	}
 
